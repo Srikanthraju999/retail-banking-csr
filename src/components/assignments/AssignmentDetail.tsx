@@ -10,13 +10,14 @@ import {
 import { getDataPage } from '../../api/dataService';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { ErrorAlert } from '../common/ErrorAlert';
+import { ChevronDownIcon, ChevronRightIcon, UserIcon, PhoneIcon } from '@heroicons/react/24/outline';
 
 // ── Types ──
 
 interface FieldDataSource {
-  name: string;       // data page name, e.g. "D_PowerSubstation"
-  keyField: string;   // key property, e.g. "pyGUID"
-  textField: string;  // display property, e.g. "SubstationName"
+  name: string;
+  keyField: string;
+  textField: string;
 }
 
 interface FormField {
@@ -32,13 +33,14 @@ interface FormField {
   controlType: string;
   options: { key: string; value: string }[];
   datasource?: FieldDataSource;
+  groupName?: string;
 }
 
 interface StageInfo {
   ID: string;
   name: string;
-  visited_status: string; // "active" | "future" | "visited"
-  type: string; // "Primary" | "Alternate"
+  visited_status: string;
+  type: string;
 }
 
 interface ActionInfo {
@@ -53,7 +55,7 @@ interface NavigationStep {
   ID: string;
   name: string;
   actionID: string;
-  visited_status: string; // "current" | "future" | "visited"
+  visited_status: string;
   openHref: string;
 }
 
@@ -82,7 +84,7 @@ interface AssignmentPageData {
   secondaryButtons: ActionButtonInfo[];
 }
 
-// ── Helpers to extract data from the create-case response (data.caseInfo) ──
+// ── Helpers ──
 
 function str(val: unknown): string {
   return typeof val === 'string' ? val : '';
@@ -110,16 +112,13 @@ function extractPageData(navState: Record<string, unknown> | null, assignmentId:
 
   if (!navState) return defaults;
 
-  // Navigate into data.caseInfo
   const data = navState.data as Record<string, unknown> | undefined;
   const ci = (data?.caseInfo ?? navState) as Record<string, unknown>;
 
-  // Assignments
   const assignments = ci.assignments as Array<Record<string, unknown>> | undefined;
   const firstAsgn = assignments?.[0];
   const asgnActions = firstAsgn?.actions as Array<Record<string, unknown>> | undefined;
 
-  // Stages
   const rawStages = ci.stages as Array<Record<string, unknown>> | undefined;
   const stages: StageInfo[] = (rawStages ?? []).map((s) => ({
     ID: str(s.ID),
@@ -128,7 +127,6 @@ function extractPageData(navState: Record<string, unknown> | null, assignmentId:
     type: str(s.type),
   }));
 
-  // Actions from the first assignment's actions – include links
   const actions: ActionInfo[] = (asgnActions ?? []).map((a) => {
     const links = a.links as Record<string, Record<string, unknown>> | undefined;
     return {
@@ -140,7 +138,6 @@ function extractPageData(navState: Record<string, unknown> | null, assignmentId:
     };
   });
 
-  // Navigation steps & action buttons from uiResources
   const uiResources = navState.uiResources as Record<string, unknown> | undefined;
   const navigation = uiResources?.navigation as Record<string, unknown> | undefined;
   const rawSteps = navigation?.steps as Array<Record<string, unknown>> | undefined;
@@ -190,9 +187,8 @@ function extractPageData(navState: Record<string, unknown> | null, assignmentId:
   };
 }
 
-// ── Field extraction from assignment action view response ──
+// ── Field extraction ──
 
-// Legacy v1 field extraction (fallback)
 function extractFields(obj: unknown, prefix = ''): FormField[] {
   const fields: FormField[] = [];
   if (!obj || typeof obj !== 'object') return fields;
@@ -283,13 +279,13 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
   const fieldsMeta = resources.fields as Record<string, unknown[]> | undefined;
   if (!views) return [];
 
-  // Get content for current values and view-name resolution
   const data = response.data as Record<string, unknown> | undefined;
   const caseInfo = data?.caseInfo as Record<string, unknown> | undefined;
   const content = caseInfo?.content as Record<string, unknown> | undefined;
 
   const fields: FormField[] = [];
-  const visited = new Set<string>(); // prevent infinite view recursion
+  const visited = new Set<string>();
+  let currentGroupName = '';
 
   function traverseNode(node: unknown): void {
     if (!node || typeof node !== 'object') return;
@@ -297,9 +293,25 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
     const type = n.type as string | undefined;
     const config = n.config as Record<string, unknown> | undefined;
 
-    // Handle view references like { type: "reference", config: { type: "view", name: "@P .pyViewName" } }
+    // Track group/region names for collapsible sections
+    if (type === 'Region' || type === 'Group') {
+      const heading = config?.heading as string | undefined;
+      const title = config?.title as string | undefined;
+      const label = config?.label as string | undefined;
+      if (heading || title || label) {
+        currentGroupName = heading || title || label || '';
+      }
+    }
+
     if (type === 'reference' && config?.type === 'view') {
       let viewName = config.name as string | undefined;
+      // Track view name as potential group name
+      if (viewName && !viewName.includes('@')) {
+        const cleanName = viewName.replace(/^.*\./, '').replace(/([A-Z])/g, ' $1').trim();
+        if (cleanName && cleanName.length > 2) {
+          currentGroupName = cleanName;
+        }
+      }
       if (viewName?.includes('@')) {
         const propName = resolvePropertyRef(viewName);
         if (propName && content) {
@@ -314,7 +326,6 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
       return;
     }
 
-    // Handle field components (TextInput, Dropdown, etc.)
     if (type && FIELD_COMPONENT_TYPES.has(type) && config) {
       const valueRef = config.value as string | undefined;
       if (valueRef) {
@@ -323,19 +334,16 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
           const metaArr = fieldsMeta?.[fieldName] as unknown[] | undefined;
           const meta = metaArr?.[0] as Record<string, unknown> | undefined;
 
-          // Resolve label: @FL, @L, @LR etc. → look up in field metadata
           let label = fieldName;
           const labelRef = config.label as string | undefined;
           if (labelRef) {
             if (labelRef.startsWith('@')) {
-              // Any Pega reference → resolve from field metadata
               label = (meta?.label as string) || fieldName;
             } else {
               label = labelRef;
             }
           }
 
-          // Resolve inline options for dropdowns
           let options: { key: string; value: string }[] = [];
           const listSource = config.datasource as Record<string, unknown> | undefined;
           if (listSource?.records && Array.isArray(listSource.records)) {
@@ -345,10 +353,7 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
             }));
           }
 
-          // Detect data source for refer-type fields
           let datasource: FieldDataSource | undefined;
-
-          // 1. Check component config datasource (e.g. AutoComplete/Dropdown with @DATASOURCE)
           if (listSource?.source && typeof listSource.source === 'string') {
             const dsMatch = (listSource.source as string).match(/@DATASOURCE\s+([\w-]+)/);
             if (dsMatch) {
@@ -361,7 +366,6 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
             }
           }
 
-          // 2. Check field metadata for dataRetrievalType "refer"
           if (!datasource && meta?.dataRetrievalType === 'refer') {
             const metaDs = meta.datasource as Record<string, unknown> | undefined;
             const dsName = metaDs?.name as string | undefined;
@@ -369,7 +373,7 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
               datasource = {
                 name: dsName,
                 keyField: 'pyGUID',
-                textField: '',  // resolved after fetching
+                textField: '',
               };
             }
           }
@@ -387,25 +391,23 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
             controlType: (meta?.displayAs as string) || mapComponentToControl(type),
             options,
             datasource,
+            groupName: currentGroupName || 'Details',
           });
         }
       }
     }
 
-    // Recurse into children
     const children = n.children as unknown[] | undefined;
     if (children) {
       for (const child of children) traverseNode(child);
     }
   }
 
-  // Start from root reference if available
   const root = uiResources.root as Record<string, unknown> | undefined;
   if (root) {
     traverseNode(root);
   }
 
-  // Fallback: if root didn't yield fields, traverse all non-wrapper views directly
   if (fields.length === 0) {
     for (const viewName of Object.keys(views)) {
       if (viewName === 'pzCreateDetails') continue;
@@ -428,7 +430,6 @@ const SYSTEM_FIELDS = new Set([
   'pxSaveDateTimeStamp', 'pxPages',
 ]);
 
-/** Pick the first descriptive text property as the display field */
 function pickDisplayField(record: Record<string, unknown>): string {
   for (const [key, val] of Object.entries(record)) {
     if (SYSTEM_FIELDS.has(key)) continue;
@@ -438,12 +439,10 @@ function pickDisplayField(record: Record<string, unknown>): string {
   return 'pyGUID';
 }
 
-/** Fetch data pages for all refer-type fields and populate their options */
 async function resolveDataSources(fields: FormField[]): Promise<FormField[]> {
   const referFields = fields.filter((f) => f.datasource?.name && f.options.length === 0);
   if (referFields.length === 0) return fields;
 
-  // Group by datasource name to avoid duplicate fetches
   const byDs = new Map<string, FormField[]>();
   for (const f of referFields) {
     const name = f.datasource!.name;
@@ -472,7 +471,7 @@ async function resolveDataSources(fields: FormField[]): Promise<FormField[]> {
           f.controlType = 'pxDropdown';
         }
       } catch {
-        // Data source fetch failed – field stays as text input
+        // Data source fetch failed
       }
     }),
   );
@@ -483,7 +482,7 @@ async function resolveDataSources(fields: FormField[]): Promise<FormField[]> {
 // ── Field rendering ──
 
 function FieldInput({ field, value, onChange }: { field: FormField; value: string; onChange: (val: string) => void }) {
-  const base = 'mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500';
+  const base = 'mt-1 block w-full rounded border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:bg-gray-100 disabled:text-gray-400';
 
   if (field.readOnly || field.disabled) {
     return <input type="text" value={value} disabled className={base} />;
@@ -503,7 +502,7 @@ function FieldInput({ field, value, onChange }: { field: FormField; value: strin
     return <textarea value={value} onChange={(e) => onChange(e.target.value)} required={field.required} maxLength={field.maxLength} rows={3} className={base} />;
   }
   if (ct.includes('checkbox') || field.type.toLowerCase() === 'boolean') {
-    return <input type="checkbox" checked={value === 'true'} onChange={(e) => onChange(e.target.checked ? 'true' : 'false')} className="mt-2 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />;
+    return <input type="checkbox" checked={value === 'true'} onChange={(e) => onChange(e.target.checked ? 'true' : 'false')} className="mt-2 h-4 w-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500" />;
   }
   if (ct.includes('date') || field.type.toLowerCase().includes('date')) {
     return <input type="date" value={value} onChange={(e) => onChange(e.target.value)} required={field.required} className={base} />;
@@ -520,79 +519,144 @@ function FieldInput({ field, value, onChange }: { field: FormField; value: strin
   return <input type="text" value={value} onChange={(e) => onChange(e.target.value)} required={field.required} maxLength={field.maxLength} className={base} />;
 }
 
-// ── Stages sidebar ──
+// ── Case Header Bar ──
 
-function StagesSidebar({ stages, currentStageLabel }: { stages: StageInfo[]; currentStageLabel: string }) {
-  // Show primary stages first, then alternate
-  const primary = stages.filter((s) => s.type === 'Primary');
-  const alternate = stages.filter((s) => s.type === 'Alternate');
-
-  if (primary.length === 0 && alternate.length === 0) return null;
-
-  function renderStages(list: StageInfo[]) {
-    return list.map((stage, idx) => {
-      const isActive = stage.visited_status === 'active' || stage.name === currentStageLabel;
-      const isVisited = stage.visited_status === 'visited';
-      return (
-        <li key={stage.ID} className="flex items-center gap-3 py-2">
-          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-            isActive ? 'bg-blue-600 text-white' : isVisited ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
-          }`}>
-            {isActive ? idx + 1 : isVisited ? '\u2713' : idx + 1}
-          </span>
-          <span className={`text-sm ${isActive ? 'font-semibold text-gray-900' : isVisited ? 'text-gray-600' : 'text-gray-400'}`}>
-            {stage.name}
-          </span>
-        </li>
-      );
-    });
-  }
+function CaseHeaderBar({ pageData }: { pageData: AssignmentPageData }) {
+  const startDate = pageData.createTime
+    ? new Date(pageData.createTime).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : '';
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Stages</h3>
-      <ol className="space-y-1">{renderStages(primary)}</ol>
-      {alternate.length > 0 && (
-        <>
-          <h4 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-gray-400">Alternate</h4>
-          <ol className="space-y-1">{renderStages(alternate)}</ol>
-        </>
-      )}
+    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-6 py-4">
+      <div className="text-base font-semibold text-gray-800">
+        Case ID - {pageData.caseId.replace(/.*-/, '') || pageData.caseId}
+      </div>
+      <div className="flex items-center gap-8">
+        <div className="text-center">
+          <div className="text-xs font-medium text-gray-400">Status</div>
+          <div className="text-sm font-semibold text-gray-700">{pageData.status || 'New'}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs font-medium text-gray-400">Start Date</div>
+          <div className="text-sm font-semibold text-gray-700">{startDate}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs font-medium text-gray-400">Customer ID</div>
+          <div className="text-sm font-semibold text-gray-700">{pageData.owner || '-'}</div>
+        </div>
+        <div className="flex items-center gap-3 border-l border-gray-200 pl-6">
+          <div className="flex items-center gap-1 text-sm text-gray-600">
+            <UserIcon className="h-4 w-4" />
+            <span>{pageData.createdBy || pageData.owner || 'Customer'}</span>
+          </div>
+          <div className="flex items-center gap-1 text-sm text-gray-600">
+            <PhoneIcon className="h-4 w-4" />
+            <span>-</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ── Navigation steps (multi-step within an assignment) ──
+// ── Stage Chevron Bar ──
+
+function StageChevronBar({ stages, currentStageLabel }: { stages: StageInfo[]; currentStageLabel: string }) {
+  const primary = stages.filter((s) => s.type === 'Primary');
+  if (primary.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-0">
+      {primary.map((stage, idx) => {
+        const isActive = stage.visited_status === 'active' || stage.name === currentStageLabel;
+        const isVisited = stage.visited_status === 'visited';
+        return (
+          <div
+            key={stage.ID}
+            className={`relative flex h-11 flex-1 items-center justify-center text-sm font-semibold ${
+              isActive
+                ? 'bg-orange-500 text-white'
+                : isVisited
+                ? 'bg-orange-100 text-orange-700'
+                : 'bg-gray-100 text-gray-500'
+            } ${idx === 0 ? 'rounded-l-lg' : ''} ${idx === primary.length - 1 ? 'rounded-r-lg' : ''}`}
+            style={{
+              clipPath: idx < primary.length - 1
+                ? 'polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 12px 50%)'
+                : idx > 0
+                ? 'polygon(0 0, 100% 0, 100% 100%, 0 100%, 12px 50%)'
+                : 'polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%)',
+            }}
+          >
+            {stage.name}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Navigation Steps (numbered circles) ──
 
 function NavigationStepsBar({ steps }: { steps: NavigationStep[] }) {
   if (steps.length <= 1) return null;
 
   return (
-    <nav className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
+    <div className="flex items-center justify-center gap-0 py-4">
       {steps.map((step, idx) => {
         const isCurrent = step.visited_status === 'current';
         const isVisited = step.visited_status === 'visited';
+        const stepNum = String(idx + 1).padStart(2, '0');
         return (
-          <div key={step.ID} className="flex items-center gap-2">
-            {idx > 0 && <span className="text-gray-300">&rarr;</span>}
-            <div className="flex items-center gap-1.5">
-              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                isCurrent ? 'bg-blue-600 text-white' : isVisited ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+          <div key={step.ID} className="flex items-center">
+            {idx > 0 && <div className={`h-px w-16 ${isVisited || isCurrent ? 'bg-orange-300' : 'bg-gray-200'}`} />}
+            <div className="flex flex-col items-center gap-1.5">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-bold ${
+                isCurrent
+                  ? 'border-orange-500 bg-white text-orange-500'
+                  : isVisited
+                  ? 'border-green-500 bg-green-50 text-green-600'
+                  : 'border-gray-200 bg-white text-gray-400'
               }`}>
-                {isVisited ? '\u2713' : idx + 1}
-              </span>
-              <span className={`text-sm ${isCurrent ? 'font-semibold text-gray-900' : isVisited ? 'text-gray-600' : 'text-gray-400'}`}>
+                {stepNum}
+              </div>
+              <span className={`text-xs whitespace-nowrap ${
+                isCurrent ? 'font-semibold text-orange-500' : isVisited ? 'text-green-600' : 'text-gray-400'
+              }`}>
                 {step.name}
               </span>
             </div>
           </div>
         );
       })}
-    </nav>
+    </div>
   );
 }
 
-// ── Helpers: apply response to component state ──
+// ── Collapsible Section ──
+
+function CollapsibleSection({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className="border-b border-gray-100 last:border-b-0">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between py-4 text-left"
+      >
+        <h3 className="text-base font-semibold text-gray-800">{title}</h3>
+        {open ? (
+          <ChevronDownIcon className="h-5 w-5 text-orange-500" />
+        ) : (
+          <ChevronRightIcon className="h-5 w-5 text-gray-400" />
+        )}
+      </button>
+      {open && <div className="pb-6">{children}</div>}
+    </div>
+  );
+}
+
+// ── Helpers ──
 
 function extractFormState(response: Record<string, unknown>): { fields: FormField[]; values: Record<string, string> } {
   let extracted = extractFieldsFromUiResources(response);
@@ -604,6 +668,17 @@ function extractFormState(response: Record<string, unknown>): { fields: FormFiel
     values[f.reference || f.fieldID] = f.value ?? '';
   }
   return { fields: extracted, values };
+}
+
+/** Group fields by their groupName */
+function groupFields(fields: FormField[]): Map<string, FormField[]> {
+  const groups = new Map<string, FormField[]>();
+  for (const f of fields) {
+    const name = f.groupName || 'Details';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name)!.push(f);
+  }
+  return groups;
 }
 
 // ── Main component ──
@@ -621,31 +696,23 @@ export function AssignmentDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Apply extracted fields + resolve data sources, then update state */
   const applyFields = useCallback(async (f: FormField[], v: Record<string, string>) => {
-    // Set fields immediately so the UI shows something
     setFields([...f]);
     setFormValues(v);
-    // Resolve refer-type data sources in the background
     const hasRefer = f.some((field) => field.datasource?.name && field.options.length === 0);
     if (hasRefer) {
       await resolveDataSources(f);
-      setFields([...f]); // re-set with populated options
+      setFields([...f]);
     }
   }, []);
 
-  /** Load assignment data from a response object (navState or submit response) */
   const loadFromResponse = useCallback((response: Record<string, unknown>, id: string) => {
     const pd = extractPageData(response, id);
     setPageData(pd);
-
     const { fields: f, values: v } = extractFormState(response);
     setFields(f);
     setFormValues(v);
-
-    // Kick off async data source resolution
     applyFields(f, v);
-
     return { pageData: pd, fieldsCount: f.length };
   }, [applyFields]);
 
@@ -656,7 +723,6 @@ export function AssignmentDetail() {
 
     const id = decodeURIComponent(assignmentId);
 
-    // 1. Build page data from navState (create case / previous submit response)
     let pd: AssignmentPageData;
     let fieldsCount = 0;
 
@@ -668,14 +734,12 @@ export function AssignmentDetail() {
       pd = extractPageData(null, id);
     }
 
-    // 2. Try to enrich from assignment API
     try {
       const asgn = await getAssignment(id);
       const asgnObj = asgn as unknown as Record<string, unknown>;
       if (str(asgnObj.name)) pd.assignmentName = str(asgnObj.name);
       if (str(asgnObj.caseID)) pd.caseId = str(asgnObj.caseID);
       if (str(asgnObj.instructions)) pd.instructions = str(asgnObj.instructions);
-      // Enrich actions if not already populated
       const asgnActions = asgnObj.actions as Array<Record<string, unknown>> | undefined;
       if (asgnActions && asgnActions.length > 0 && pd.actions.length === 0) {
         pd.actions = asgnActions.map((a) => {
@@ -690,12 +754,11 @@ export function AssignmentDetail() {
         });
       }
     } catch {
-      // Assignment API failed, continue with navState data
+      // Assignment API failed
     }
 
     setPageData({ ...pd });
 
-    // 3. If no fields from navState, fetch via the action's open link or action view API
     if (fieldsCount === 0) {
       const firstAction = pd.actions[0];
       try {
@@ -708,7 +771,6 @@ export function AssignmentDetail() {
         const { fields: f, values: v } = extractFormState(actionView);
         await applyFields(f, v);
 
-        // Also extract navigation/buttons from action view if not already set
         if (pd.navigationSteps.length === 0) {
           const refreshed = extractPageData(actionView, id);
           if (refreshed.navigationSteps.length > 0) pd.navigationSteps = refreshed.navigationSteps;
@@ -748,14 +810,10 @@ export function AssignmentDetail() {
     return content;
   }
 
-  /** After submit, try to load the next step's fields from the response or via API */
   async function loadNextStep(response: Record<string, unknown>, nextId: string) {
-    // 1. Try extracting everything from the submit response
     const result = loadFromResponse(response, nextId);
+    if (result.fieldsCount > 0) return;
 
-    if (result.fieldsCount > 0) return; // fields found, done
-
-    // 2. No fields in submit response → call the next action's open href (GET)
     const nextAction = result.pageData.actions[0];
     const aId = nextAction?.ID || 'pyDefault';
 
@@ -772,7 +830,6 @@ export function AssignmentDetail() {
         await applyFields(f, v);
       }
 
-      // Update navigation steps / buttons from the action view response
       const refreshed = extractPageData(actionView, nextId);
       setPageData((prev) => {
         if (!prev) return prev;
@@ -801,14 +858,12 @@ export function AssignmentDetail() {
       const content = buildContent();
       let response: Record<string, unknown>;
 
-      // Use the action's submit href (PATCH) if available, otherwise fallback
       if (currentAction?.submitHref) {
         response = await submitAssignment(currentAction.submitHref, content);
       } else {
         response = await performAssignment(id, currentAction?.ID || 'pyDefault', content);
       }
 
-      // Parse response for next assignment
       const respData = response.data as Record<string, unknown> | undefined;
       const respCaseInfo = respData?.caseInfo as Record<string, unknown> | undefined;
       const respAssignments = respCaseInfo?.assignments as Array<Record<string, unknown>> | undefined;
@@ -817,16 +872,12 @@ export function AssignmentDetail() {
 
       if (nextId && typeof nextId === 'string') {
         if (nextId === id) {
-          // Same assignment, next step (multi-step) → update in place + fetch if needed
           await loadNextStep(response, nextId);
         } else {
-          // Different assignment → update in place + fetch if needed
           await loadNextStep(response, nextId);
-          // Update URL to reflect the new assignment without a full reload
           window.history.replaceState(response, '', `/worklist/${encodeURIComponent(nextId)}`);
         }
       } else {
-        // No next assignment → case resolved or no more steps
         const caseId = pageData.caseId || (respCaseInfo?.ID as string);
         if (caseId) {
           navigate(`/cases/${encodeURIComponent(caseId)}`);
@@ -844,31 +895,26 @@ export function AssignmentDetail() {
   if (loading) return <LoadingSpinner message="Loading assignment..." />;
   if (!pageData) return <ErrorAlert message="Assignment not found" />;
 
-  // Determine the main button label from uiResources actionButtons
   const mainBtnLabel = pageData.mainButtons[0]?.name || pageData.actions[0]?.name || 'Submit';
+  const fieldGroups = groupFields(fields);
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <button onClick={() => navigate('/cases')} className="text-sm text-blue-600 hover:underline">
-            &larr; Back to Cases
-          </button>
-          <h2 className="mt-1 text-2xl font-bold text-gray-900">{pageData.assignmentName}</h2>
-          <p className="text-sm text-gray-500">
-            {pageData.caseName && <span>{pageData.caseName} &middot; </span>}
-            {pageData.caseId}
-          </p>
+      {/* Case Header Bar */}
+      <CaseHeaderBar pageData={pageData} />
+
+      {/* Stage Chevron Bar */}
+      <div className="flex items-start gap-4">
+        <div className="flex-1">
+          <StageChevronBar stages={pageData.stages} currentStageLabel={pageData.stageLabel} />
         </div>
-        {pageData.status && (
-          <span className="inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-800">
-            {pageData.status}
-          </span>
-        )}
+        <div className="shrink-0 pt-2 text-sm">
+          <span className="text-gray-500">Need Help? </span>
+          <button className="font-medium text-blue-600 hover:underline">Ask your questions!</button>
+        </div>
       </div>
 
-      {/* Navigation steps (multi-step within assignment) */}
+      {/* Navigation Steps */}
       <NavigationStepsBar steps={pageData.navigationSteps} />
 
       {pageData.instructions && (
@@ -879,101 +925,90 @@ export function AssignmentDetail() {
 
       {error && <ErrorAlert message={error} onDismiss={() => setError(null)} />}
 
-      <div className="flex gap-6">
-        {/* Main form area */}
-        <div className="flex-1">
-          <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-            {fields.length === 0 ? (
-              <div className="space-y-4">
-                <p className="text-sm text-gray-500">No form fields available for this step.</p>
-                <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {pageData.owner && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Owner</dt>
-                      <dd className="mt-1 text-sm text-gray-900">{pageData.owner}</dd>
-                    </div>
-                  )}
-                  {pageData.urgency && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Urgency</dt>
-                      <dd className="mt-1 text-sm text-gray-900">{pageData.urgency}</dd>
-                    </div>
-                  )}
-                  {pageData.createdBy && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Created By</dt>
-                      <dd className="mt-1 text-sm text-gray-900">{pageData.createdBy}</dd>
-                    </div>
-                  )}
-                  {pageData.createTime && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Created</dt>
-                      <dd className="mt-1 text-sm text-gray-900">{new Date(pageData.createTime).toLocaleString()}</dd>
-                    </div>
-                  )}
-                  {pageData.caseId && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Case ID</dt>
-                      <dd className="mt-1 text-sm text-gray-900">{pageData.caseId}</dd>
-                    </div>
-                  )}
-                </dl>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                {fields.map((field) => {
-                  const key = field.reference || field.fieldID;
-                  return (
-                    <div key={key} className={field.controlType.toLowerCase().includes('textarea') ? 'sm:col-span-2' : ''}>
-                      <label className="block text-sm font-medium text-gray-700">
-                        {field.label}
-                        {field.required && <span className="ml-1 text-red-500">*</span>}
-                      </label>
-                      <FieldInput field={field} value={formValues[key] ?? ''} onChange={(val) => handleFieldChange(key, val)} />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div className="mt-8 flex items-center justify-end gap-3 border-t border-gray-100 pt-4">
-              <button type="button" onClick={() => navigate('/cases')}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                Cancel
-              </button>
-              <button onClick={handleSubmit} disabled={submitting}
-                className="rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60">
-                {submitting ? 'Submitting...' : mainBtnLabel}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Right sidebar */}
-        <div className="hidden w-64 shrink-0 lg:block">
-          <StagesSidebar stages={pageData.stages} currentStageLabel={pageData.stageLabel} />
-
-          {/* Details card */}
-          <div className={`${pageData.stages.length > 0 ? 'mt-4' : ''} rounded-lg border border-gray-200 bg-white p-4 shadow-sm`}>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Details</h3>
-            <dl className="space-y-2 text-sm">
+      {/* Form Content */}
+      <div className="rounded-lg border border-gray-200 bg-white px-8 py-2">
+        {fields.length === 0 ? (
+          <div className="py-6">
+            <p className="text-sm text-gray-500">No form fields available for this step.</p>
+            <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {pageData.owner && (
-                <div><dt className="text-gray-500">Owner</dt><dd className="font-medium text-gray-900">{pageData.owner}</dd></div>
-              )}
-              {pageData.createdBy && (
-                <div><dt className="text-gray-500">Created By</dt><dd className="font-medium text-gray-900">{pageData.createdBy}</dd></div>
+                <div>
+                  <dt className="text-xs font-medium text-gray-400">Owner</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{pageData.owner}</dd>
+                </div>
               )}
               {pageData.urgency && (
-                <div><dt className="text-gray-500">Urgency</dt><dd className="font-medium text-gray-900">{pageData.urgency}</dd></div>
+                <div>
+                  <dt className="text-xs font-medium text-gray-400">Urgency</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{pageData.urgency}</dd>
+                </div>
               )}
-              {pageData.status && (
-                <div><dt className="text-gray-500">Status</dt><dd className="font-medium text-gray-900">{pageData.status}</dd></div>
+              {pageData.createdBy && (
+                <div>
+                  <dt className="text-xs font-medium text-gray-400">Created By</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{pageData.createdBy}</dd>
+                </div>
               )}
               {pageData.createTime && (
-                <div><dt className="text-gray-500">Created</dt><dd className="font-medium text-gray-900">{new Date(pageData.createTime).toLocaleString()}</dd></div>
+                <div>
+                  <dt className="text-xs font-medium text-gray-400">Created</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{new Date(pageData.createTime).toLocaleString()}</dd>
+                </div>
+              )}
+              {pageData.caseId && (
+                <div>
+                  <dt className="text-xs font-medium text-gray-400">Case ID</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{pageData.caseId}</dd>
+                </div>
               )}
             </dl>
+          </div>
+        ) : (
+          <div>
+            {Array.from(fieldGroups.entries()).map(([groupName, groupFields]) => (
+              <CollapsibleSection key={groupName} title={groupName}>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {groupFields.map((field) => {
+                    const key = field.reference || field.fieldID;
+                    return (
+                      <div key={key} className={field.controlType.toLowerCase().includes('textarea') ? 'sm:col-span-2 lg:col-span-3' : ''}>
+                        <label className="block text-xs font-medium text-gray-500">
+                          {field.label}
+                          {field.required && <span className="ml-0.5 text-red-500">*</span>}
+                        </label>
+                        <FieldInput field={field} value={formValues[key] ?? ''} onChange={(val) => handleFieldChange(key, val)} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </CollapsibleSection>
+            ))}
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex items-center justify-between border-t border-gray-100 py-5">
+          <button
+            type="button"
+            onClick={() => navigate('/cases')}
+            className="rounded-md border border-gray-300 px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Back
+          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="rounded-md border border-gray-300 px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Save for Later
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="rounded-md bg-orange-600 px-8 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:opacity-60"
+            >
+              {submitting ? 'Submitting...' : mainBtnLabel}
+            </button>
           </div>
         </div>
       </div>
