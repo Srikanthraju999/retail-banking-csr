@@ -306,9 +306,9 @@ function extractFieldsFromUiResources(response: Record<string, unknown>): FormFi
           viewName = content[propName] as string | undefined;
         }
       }
-      if (viewName && !visited.has(viewName) && views[viewName]) {
+      if (viewName && !visited.has(viewName) && views?.[viewName]) {
         visited.add(viewName);
-        const viewDef = (views[viewName] as unknown[])[0];
+        const viewDef = (views?.[viewName] as unknown[])[0];
         if (viewDef) traverseNode(viewDef);
       }
       return;
