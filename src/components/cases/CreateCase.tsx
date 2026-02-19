@@ -21,7 +21,7 @@ export function CreateCase() {
     try {
       const types = await getCaseTypes();
       setCaseTypes(types);
-      if (types.length > 0) setSelectedType(types[0].caseTypeID);
+      if (types.length > 0) setSelectedType(types[0].ID ?? types[0].caseTypeID ?? '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load case types');
     } finally {
@@ -37,7 +37,8 @@ export function CreateCase() {
     setError(null);
     try {
       const newCase = await createCase({ caseTypeID: selectedType });
-      navigate(`/cases/${encodeURIComponent(newCase.ID)}`);
+      const caseId = (newCase.ID as string) ?? '';
+      navigate(`/cases/${encodeURIComponent(caseId)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create case');
       setSubmitting(false);
@@ -63,15 +64,18 @@ export function CreateCase() {
             onChange={(e) => setSelectedType(e.target.value)}
             className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
-            {caseTypes.map((ct) => (
-              <option key={ct.caseTypeID} value={ct.caseTypeID}>
-                {ct.name}
-              </option>
-            ))}
+            {caseTypes.map((ct) => {
+              const id = ct.ID ?? ct.caseTypeID ?? '';
+              return (
+                <option key={id} value={id}>
+                  {ct.name}
+                </option>
+              );
+            })}
           </select>
-          {caseTypes.find((ct) => ct.caseTypeID === selectedType)?.description && (
+          {caseTypes.find((ct) => (ct.ID ?? ct.caseTypeID) === selectedType)?.description && (
             <p className="mt-1 text-xs text-gray-500">
-              {caseTypes.find((ct) => ct.caseTypeID === selectedType)?.description}
+              {caseTypes.find((ct) => (ct.ID ?? ct.caseTypeID) === selectedType)?.description}
             </p>
           )}
         </div>

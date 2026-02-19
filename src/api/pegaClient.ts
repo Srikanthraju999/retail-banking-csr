@@ -10,17 +10,42 @@ const pegaClient = axios.create({
   },
 });
 
-// Request interceptor – attach auth token
+// ETag store – tracks the latest ETag per assignment base URL for If-Match headers
+const etagStore = new Map<string, string>();
+
+/** Derive a cache key from a URL: use the decoded /assignments/{id} prefix */
+function etagKey(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  // Decode so that %20 and raw spaces produce the same key
+  let decoded: string;
+  try { decoded = decodeURIComponent(url); } catch { decoded = url; }
+  const match = decoded.match(/(\/assignments\/[^/]+)/);
+  return match ? match[1] : undefined;
+}
+
+// Request interceptor – attach auth token + If-Match for PATCH
 pegaClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const stored = sessionStorage.getItem('pega_tokens');
   if (stored) {
     const tokens = JSON.parse(stored);
     config.headers.Authorization = `${tokens.tokenType ?? 'Bearer'} ${tokens.accessToken}`;
   }
+
+  // Attach If-Match header for PATCH requests (required by Pega DX API v2)
+  if (config.method === 'patch') {
+    const key = etagKey(config.url);
+    if (key) {
+      const etag = etagStore.get(key);
+      if (etag) {
+        config.headers['If-Match'] = etag;
+      }
+    }
+  }
+
   return config;
 });
 
-// Response interceptor – handle 401 token refresh
+// Response interceptor – handle 401 token refresh + capture ETags
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (token: string) => void;
@@ -36,7 +61,17 @@ function processQueue(error: unknown, token: string | null) {
 }
 
 pegaClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Capture ETag from response headers for future PATCH requests
+    const etag = response.headers['etag'];
+    if (etag) {
+      const key = etagKey(response.config.url);
+      if (key) {
+        etagStore.set(key, etag);
+      }
+    }
+    return response;
+  },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 

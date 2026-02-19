@@ -9,13 +9,13 @@ import type {
 } from '../types/pega.types';
 
 export async function getCaseTypes(): Promise<PegaCaseType[]> {
-  const { data } = await pegaClient.get<PegaListResponse<PegaCaseType>>('/casetypes');
-  return data.pxResults ?? [];
+  const { data } = await pegaClient.get('/casetypes');
+  return data.caseTypes ?? data.pxResults ?? [];
 }
 
-export async function createCase(payload: CreateCasePayload): Promise<PegaCase> {
+export async function createCase(payload: CreateCasePayload): Promise<Record<string, unknown>> {
   const { data } = await pegaClient.post('/cases', payload);
-  return data;
+  return data as Record<string, unknown>;
 }
 
 export async function getCase(caseId: string): Promise<PegaCase> {

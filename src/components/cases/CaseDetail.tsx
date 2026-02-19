@@ -1,23 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getCase, getCaseActions, getCaseHistory, performAction } from '../../api/caseService';
+import { getCase } from '../../api/caseService';
 import { getAttachments, uploadAttachment } from '../../api/attachmentService';
-import type { PegaCase, PegaCaseAction, PegaCaseHistoryEntry, PegaAttachment } from '../../types/pega.types';
+import type { PegaCase, PegaAttachment } from '../../types/pega.types';
 import { StatusBadge } from '../common/StatusBadge';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { ErrorAlert } from '../common/ErrorAlert';
-import { CaseHistory } from './CaseHistory';
 
 export function CaseDetail() {
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
   const [caseData, setCaseData] = useState<PegaCase | null>(null);
-  const [actions, setActions] = useState<PegaCaseAction[]>([]);
-  const [history, setHistory] = useState<PegaCaseHistoryEntry[]>([]);
   const [attachments, setAttachments] = useState<PegaAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'details' | 'history' | 'attachments'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'attachments'>('details');
 
   useEffect(() => {
     if (!caseId) return;
@@ -29,30 +26,16 @@ export function CaseDetail() {
     setError(null);
     try {
       const id = decodeURIComponent(caseId!);
-      const [c, acts, hist, att] = await Promise.all([
+      const [c, att] = await Promise.all([
         getCase(id),
-        getCaseActions(id),
-        getCaseHistory(id),
         getAttachments(id),
       ]);
       setCaseData(c);
-      setActions(acts);
-      setHistory(hist);
       setAttachments(att);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load case');
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleAction(actionId: string) {
-    if (!caseId) return;
-    try {
-      await performAction(decodeURIComponent(caseId), actionId);
-      loadCase();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Action failed');
     }
   }
 
@@ -73,7 +56,6 @@ export function CaseDetail() {
 
   const tabs = [
     { key: 'details' as const, label: 'Details' },
-    { key: 'history' as const, label: `History (${history.length})` },
     { key: 'attachments' as const, label: `Attachments (${attachments.length})` },
   ];
 
@@ -87,18 +69,7 @@ export function CaseDetail() {
           <h2 className="mt-1 text-2xl font-bold text-gray-900">{caseData.name}</h2>
           <p className="text-sm text-gray-500">{caseData.ID}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <StatusBadge status={caseData.status} />
-          {actions.map((action) => (
-            <button
-              key={action.ID}
-              onClick={() => handleAction(action.ID)}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              {action.name}
-            </button>
-          ))}
-        </div>
+        <StatusBadge status={caseData.status} />
       </div>
 
       <div className="border-b border-gray-200">
@@ -157,8 +128,6 @@ export function CaseDetail() {
           </dl>
         </div>
       )}
-
-      {activeTab === 'history' && <CaseHistory entries={history} />}
 
       {activeTab === 'attachments' && (
         <div className="rounded-lg bg-white p-6 shadow-sm">

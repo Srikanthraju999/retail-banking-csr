@@ -16,7 +16,8 @@ export interface PegaListResponse<T> {
 // ── Cases ──
 
 export interface PegaCaseType {
-  caseTypeID: string;
+  ID?: string;
+  caseTypeID?: string;
   name: string;
   description?: string;
   pxObjClass: string;
@@ -38,7 +39,32 @@ export interface PegaCase {
   content: Record<string, unknown>;
   associations?: PegaCaseAssociation[];
   nextAssignmentID?: string;
-  assignments?: { ID: string }[];
+  assignments?: PegaCaseAssignment[];
+  stages?: PegaStage[];
+}
+
+export interface PegaCaseAssignment {
+  ID: string;
+  name?: string;
+  routedTo?: string;
+  instructions?: string;
+  actions?: PegaAssignmentActionRef[];
+}
+
+export interface PegaAssignmentActionRef {
+  ID: string;
+  name?: string;
+  type?: string;
+  href?: string;
+}
+
+export interface PegaStage {
+  ID?: string;
+  name: string;
+  entryTime?: string;
+  type?: string;
+  transitionType?: string;
+  visited?: boolean;
 }
 
 export interface PegaCaseAssociation {
@@ -83,12 +109,87 @@ export interface PegaAssignment {
   assignedTo: string;
   canPerform: string;
   pxObjClass: string;
+  actions?: PegaAssignmentActionRef[];
 }
 
 export interface PegaAssignmentAction {
   ID: string;
   name: string;
   type: string;
+}
+
+// ── Assignment Action View (form fields) ──
+
+export interface PegaActionView {
+  name?: string;
+  type?: string;
+  config?: Record<string, unknown>;
+  groups?: PegaViewGroup[];
+  view?: PegaView;
+}
+
+export interface PegaView {
+  reference?: string;
+  name?: string;
+  groups?: PegaViewGroup[];
+}
+
+export interface PegaViewGroup {
+  layout?: PegaViewLayout;
+  field?: PegaViewField;
+  caption?: string;
+  name?: string;
+  groups?: PegaViewGroup[];
+}
+
+export interface PegaViewLayout {
+  groupFormat?: string;
+  reference?: string;
+  groups?: PegaViewGroup[];
+}
+
+export interface PegaViewField {
+  fieldID: string;
+  name?: string;
+  label?: string;
+  value?: string;
+  type?: string;
+  control?: PegaFieldControl;
+  required?: boolean;
+  readOnly?: boolean;
+  disabled?: boolean;
+  visible?: boolean;
+  validatemessage?: string;
+  reference?: string;
+  maxLength?: number;
+  datasource?: PegaFieldDataSource;
+}
+
+export interface PegaFieldControl {
+  type: string;
+  modes?: PegaControlMode[];
+}
+
+export interface PegaControlMode {
+  modeType: string;
+  options?: PegaFieldOption[];
+  datasource?: PegaFieldDataSource;
+}
+
+export interface PegaFieldDataSource {
+  source?: string;
+  fields?: PegaDataSourceField[];
+  records?: PegaFieldOption[];
+}
+
+export interface PegaDataSourceField {
+  key?: string;
+  value?: string;
+}
+
+export interface PegaFieldOption {
+  key: string;
+  value: string;
 }
 
 export interface PegaFieldGroup {
