@@ -29,12 +29,12 @@ export interface PegaConfig {
 }
 
 function getEnv(key: string, fallback = ''): string {
-  return import.meta.env[key] ?? fallback;
+  return (import.meta.env[key] ?? fallback).trim();
 }
 
 function buildBaseApiUrl(serverUrl: string, contextRoot: string, apiVersion: string): string {
-  const base = serverUrl.replace(/\/+$/, '');
-  const root = contextRoot.replace(/\/+$/, '');
+  const base = serverUrl.trim().replace(/\/+$/, '');
+  const root = contextRoot.trim().replace(/\/+$/, '');
   return `${base}${root}/api/application/${apiVersion}`;
 }
 
